@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
     deploy:
@@ -14,7 +15,7 @@ jobs:
 
         - name: Install OpenShift CLI (oc)
           uses: redhat-actions/openshift-tools-installer@v1
-          with: 
+          with:
             oc: 'latest'
 
         - name: Login to OpenShift
@@ -25,19 +26,33 @@ jobs:
             namespace: 'gurungsh-dev'
             insecure_skip_tls_verify: true
 
+        - name: Deploy PostgreSQL
+          env:
+            POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          run: |
+            oc create secret generic postgres-credentials \
+            --from-literal=POSTGRESQL_USER=devpulse \
+            --from-literal=POSTGRESQL_PASSWORD="$POSTGRES_PASSWORD" \
+            --from-literal=POSTGRESQL_DATABASE=devpulse \
+            --dry-run=client -o yaml | oc apply -f -
+
+            oc apply -f openshift/postgres.yaml
+
+            oc rollout status deployment/postgresql --timeout=5m
+
         - name: Deploy Application in OpenShift
-          env: 
-            DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          env:
+            POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           run: |
             oc create secret generic api-db-secret \
-            --from-literal=DATABASE_URL="$DATABASE_URL" \
+            --from-literal=DATABASE_URL="postgresql://devpulse:${POSTGRES_PASSWORD}@postgresql:5432/devpulse" \
             --from-literal=PORT=3000 \
             --dry-run=client -o yaml | oc apply -f -
 
             oc new-app https://github.com/gurungsh/dev-pulse-api.git --name=dev-pulse-api  || true
 
-            oc start-build dev-pulse-api --follow
-
             oc set env deployment/dev-pulse-api --from=secret/api-db-secret || oc set env dc/dev-pulse-api --from=secret/api-db-secret
+
+            oc start-build dev-pulse-api --follow
 
             oc expose service/dev-pulse-api || true
