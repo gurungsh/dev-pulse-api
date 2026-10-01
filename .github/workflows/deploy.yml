@@ -46,13 +46,20 @@ jobs:
           run: |
             oc create secret generic api-db-secret \
             --from-literal=DATABASE_URL="postgresql://devpulse:${POSTGRES_PASSWORD}@postgresql:5432/devpulse" \
-            --from-literal=PORT=3000 \
+            --from-literal=PORT=8080 \
             --dry-run=client -o yaml | oc apply -f -
 
-            oc new-app https://github.com/gurungsh/dev-pulse-api.git --name=dev-pulse-api  || true
+            # First run: new-app creates the BuildConfig and starts the first build itself.
+            # Later runs: rebuild from the latest commit.
+            if oc get bc/dev-pulse-api >/dev/null 2>&1; then
+              oc start-build dev-pulse-api --follow
+            else
+              oc new-app https://github.com/gurungsh/dev-pulse-api.git --name=dev-pulse-api
+              oc logs -f bc/dev-pulse-api
+            fi
 
-            oc set env deployment/dev-pulse-api --from=secret/api-db-secret || oc set env dc/dev-pulse-api --from=secret/api-db-secret
-
-            oc start-build dev-pulse-api --follow
+            oc set env deployment/dev-pulse-api --from=secret/api-db-secret
 
             oc expose service/dev-pulse-api || true
+
+            oc rollout status deployment/dev-pulse-api --timeout=5m
