@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "dev-pulse-api.postgresqlName" . }}
+  labels:
+    {{- include "dev-pulse-api.labels" . | nindent 4 }}
+    {{- include "dev-pulse-api.postgresqlSelectorLabels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "dev-pulse-api.postgresqlName" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "dev-pulse-api.postgresqlSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dev-pulse-api.postgresqlSelectorLabels" . | nindent 8 }}
+      annotations:
+        # Restart the pod when its config or credentials change.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: postgresql
+          image: {{ .Values.postgresql.image }}
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "dev-pulse-api.name" . }}-secret
+                  key: POSTGRESQL_USER
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "dev-pulse-api.name" . }}-config
+                  key: POSTGRESQL_DATABASE
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "dev-pulse-api.name" . }}-secret
+                  key: POSTGRESQL_PASSWORD
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "pg_isready -h 127.0.0.1 -p 5432"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: postgresql
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+  # Creates one PVC per pod (data-<release>-postgresql-0). `helm uninstall` leaves it in place,
+  # so the data survives; delete the PVC by hand to wipe the database.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "dev-pulse-api.postgresqlSelectorLabels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.postgresql.storage.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.storage.size }}

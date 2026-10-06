@@ -7,7 +7,8 @@ A lightweight TypeScript API used to test deploying to OpenShift. It's an Expres
 - Node.js + TypeScript
 - Express
 - Prisma ORM with PostgreSQL
-- GitHub Actions → OpenShift (Source-to-Image build)
+- Docker image on GitHub Container Registry
+- Helm chart deployed to OpenShift by GitHub Actions
 
 ## Getting started
 
@@ -27,7 +28,7 @@ Set these environment variables:
 | Variable       | Description                                      |
 | -------------- | ------------------------------------------------ |
 | `DATABASE_URL` | PostgreSQL connection string                     |
-| `PORT`         | Port for the server to listen on (e.g. `3000`)   |
+| `PORT`         | Port for the server to listen on (e.g. `8080`)   |
 
 Create the `services` table by applying the migrations in `prisma/migrations`:
 
@@ -44,62 +45,41 @@ npm run dev                # run with ts-node
 npm run build && npm start # compile to dist/, apply pending migrations, and run
 ```
 
+To check the production image before pushing:
+
+```bash
+docker build -t dev-pulse-api .
+docker run --rm -p 8080:8080 --env-file .env dev-pulse-api
+```
+
+Inside the container, `localhost` is the container itself. If your database runs on your machine, use `host.docker.internal` in place of `localhost` in `DATABASE_URL`.
+
 ## API
 
-### `GET /api/v1/services`
-
-Lists services, ordered by id. Optional query parameters:
-
-- `id`: return only the service with this id
-- `name`: case-insensitive partial match on the name
+| Endpoint                 | Description                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `GET /api/v1/services`   | Lists services. Filter with `?id=1` or `?name=auth` (case-insensitive).       |
+| `POST /api/v1/services`  | Creates a service from `{"name", "status"}`, or updates it if `id` is given.  |
 
 ```bash
-curl "http://localhost:3000/api/v1/services?name=auth"
-```
-
-### `POST /api/v1/services`
-
-Creates a service, or updates it if the body includes an `id`.
-
-```bash
-# create
-curl -X POST http://localhost:3000/api/v1/services \
+curl -X POST http://localhost:8080/api/v1/services \
   -H "Content-Type: application/json" \
   -d '{"name": "auth-service", "status": "Healthy"}'
-
-# update
-curl -X POST http://localhost:3000/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{"id": 1, "name": "auth-service", "status": "Degraded"}'
-```
-
-A service looks like this:
-
-```json
-{ "id": 1, "name": "auth-service", "status": "Healthy", "updatedAt": "2026-09-30T12:00:00.000Z" }
 ```
 
 ## Deployment to OpenShift
 
-`.github/workflows/deploy.yml` runs on every push to `main`. You can also start it by hand with **Run workflow** on the Actions tab. It sets up everything, including the database, so it works against an empty project:
-
-1. Logs in to the OpenShift cluster with `oc`.
-2. Deploys PostgreSQL from `openshift/postgres.yaml`, which defines a deployment, a service and a 1Gi persistent volume, with credentials in the `postgres-credentials` secret. Re-running it leaves the existing database and its data in place.
-3. Creates or updates the `api-db-secret` secret with `DATABASE_URL` (pointing at the in-cluster `postgresql` service) and `PORT=3000`.
-4. Creates the app with `oc new-app` from this repo (on the first run only), injects the secret as environment variables, starts a Source-to-Image build, and exposes a route.
-
-When the app container starts, `npm start` runs `prisma migrate deploy`, which creates or updates the tables before the server starts listening.
+Every push to `main` runs `.github/workflows/deploy.yml` on GitHub Actions. It builds the Docker image, pushes it to `ghcr.io/gurungsh/dev-pulse-api`, and deploys the Helm chart in `chart/dev-pulse-api` (the app plus PostgreSQL) to the `gurungsh-dev` namespace. You can also start it by hand with **Run workflow** on the Actions tab.
 
 Add these secrets to the GitHub repository:
 
-| Secret              | Description                                                        |
-| ------------------- | ------------------------------------------------------------------ |
-| `OPENSHIFT_SERVER`  | OpenShift API server URL                                           |
-| `OPENSHIFT_TOKEN`   | Token used to log in with `oc`                                     |
-| `POSTGRES_PASSWORD` | Password for the database user. Use letters and digits only, since it is placed in a URL. |
+| Secret              | Description                                 |
+| ------------------- | ------------------------------------------- |
+| `OPENSHIFT_SERVER`  | OpenShift API server URL                    |
+| `OPENSHIFT_TOKEN`   | Token used to log in with `oc`              |
+| `POSTGRES_USER`     | Database user name                          |
+| `POSTGRES_PASSWORD` | Password for the database user              |
 
-The app deploys to the `gurungsh-dev` namespace. To find the public URL:
+Use only letters and digits in `POSTGRES_USER` and `POSTGRES_PASSWORD`. The workflow passes them with `helm --set-string`, which fails on a comma, and the chart puts them in the `DATABASE_URL` connection string, where a space turns into `+`.
 
-```bash
-oc get route dev-pulse-api
-```
+See [`chart/notes.md`](chart/notes.md) for the architecture diagram, the resources the chart creates, and how to work with a running release.

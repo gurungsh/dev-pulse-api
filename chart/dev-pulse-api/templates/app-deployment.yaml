@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dev-pulse-api.name" . }}
+  labels:
+    {{- include "dev-pulse-api.labels" . | nindent 4 }}
+    {{- include "dev-pulse-api.appSelectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.app.replicas }}
+  selector:
+    matchLabels:
+      {{- include "dev-pulse-api.appSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dev-pulse-api.appSelectorLabels" . | nindent 8 }}
+      annotations:
+        # Restart the pods when their config or credentials change.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      initContainers:
+        # `npm start` runs migrations first, so wait until the database accepts connections.
+        - name: wait-for-postgresql
+          image: {{ .Values.postgresql.image }}
+          command:
+            - /bin/sh
+            - -c
+            - until pg_isready -h {{ include "dev-pulse-api.postgresqlName" . }} -p 5432; do echo waiting for database; sleep 2; done
+      containers:
+        - name: api
+          image: "{{ .Values.app.image.repository }}:{{ .Values.app.image.tag }}"
+          imagePullPolicy: {{ .Values.app.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.app.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "dev-pulse-api.name" . }}-config
+            - secretRef:
+                name: {{ include "dev-pulse-api.name" . }}-secret
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}

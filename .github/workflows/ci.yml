@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - development
+  pull_request:
+    branches:
+      - main
+  # Lets deploy.yml run these checks before it builds anything.
+  workflow_call:
+
+jobs:
+    checks:
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Node.js
+          uses: actions/setup-node@v4
+          with:
+            node-version: 20
+            cache: npm
+
+        # Also runs `prisma generate` (postinstall).
+        - name: Install dependencies
+          run: npm ci
+
+        # `prisma validate` needs DATABASE_URL set, but never connects to it.
+        - name: Validate Prisma schema
+          run: npx prisma validate
+          env:
+            DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+        - name: Type-check
+          run: npx tsc --noEmit
+
+        - name: Audit production dependencies
+          run: npm audit --omit=dev --audit-level=high
+
+        - name: Install Helm
+          uses: azure/setup-helm@v4
+
+        - name: Lint Helm chart
+          run: helm lint chart/dev-pulse-api --set postgresql.user=ci-placeholder --set postgresql.password=ci-placeholder
+
+    scan:
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        # Vulnerable packages in package-lock.json, and secrets committed to the tree.
+        - name: Scan for vulnerabilities and secrets
+          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          with:
+            scan-type: fs
+            scanners: vuln,secret
+            severity: HIGH,CRITICAL
+            exit-code: '1'
+
+        # Misconfigurations in the Dockerfile and Helm chart. Report only for now;
+        # set exit-code to '1' once the existing findings are fixed.
+        - name: Scan Dockerfile and chart configuration
+          uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          with:
+            scan-type: config
+            severity: HIGH,CRITICAL
+            exit-code: '0'
