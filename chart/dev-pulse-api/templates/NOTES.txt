@@ -1,0 +1,9 @@
+dev-pulse-api {{ .Values.app.image.tag }} is deployed to {{ .Release.Namespace }}.
+{{- if .Values.route.enabled }}
+
+Public URL:
+  echo "https://$(oc get route {{ include "dev-pulse-api.name" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}')/api/v1/services"
+{{- end }}
+
+Database: {{ include "dev-pulse-api.postgresqlName" . }}:5432, data in PVC data-{{ include "dev-pulse-api.postgresqlName" . }}-0.
+  oc exec -it {{ include "dev-pulse-api.postgresqlName" . }}-0 -n {{ .Release.Namespace }} -- psql -d {{ .Values.postgresql.database }}

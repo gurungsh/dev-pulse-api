@@ -1,0 +1,39 @@
+app:
+  image:
+    repository: ghcr.io/gurungsh/dev-pulse-api
+    # The workflow sets this to the commit SHA on every deploy.
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+route:
+  enabled: true
+  # Leave empty to let OpenShift generate <name>-<namespace>.apps.<cluster-domain>.
+  host: ""
+
+postgresql:
+  image: quay.io/sclorg/postgresql-15-c9s:latest
+  # Required. Pass it at install time: --set-string postgresql.user=...
+  user: ""
+  database: devpulse
+  # Required. Pass it at install time: --set postgresql.password=...
+  password: ""
+  storage:
+    size: 1Gi
+    # Leave empty to use the cluster's default StorageClass.
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
